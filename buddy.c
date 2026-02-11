@@ -11,7 +11,7 @@
 
 
 #define MIN_LEVEL 3
-#define PAGE_LEVEL 12 // assume 4 KiB = 4096 bytes = 2^12 bytes
+#define PAGE_LEVEL 12 // assume page size is 4 KiB = 2^12 bytes
 
 #define PAGE_LEN (1 << PAGE_LEVEL)
 #define ONES 0xffffffffffffffff
@@ -25,6 +25,8 @@ static_assert(
     1 << MIN_LEVEL >= sizeof(head_t),
     "Min block size should be at least size of block head");
 
+static head_t *g_top_block = NULL;
+
 head_t *new_block() {
     head_t *block = mmap(
         NULL, PAGE_LEN, PROT_READ | PROT_WRITE,
@@ -35,12 +37,17 @@ head_t *new_block() {
 
     // page-aligned
     assert((((size_t) block) & ~(ONES << PAGE_LEVEL)) == 0x0);
+
     block->level = PAGE_LEVEL;
     return block;
 }
 
 head_t *get_next(head_t const *block) {
     return (head_t *) ((size_t) block + (0x1 << block->level));
+}
+
+bool within_block(head_t *block, head_t *ptr) {
+    return (size_t) ptr < (size_t) block + PAGE_LEN;
 }
 
 head_t *get_buddy(head_t const *block) {
@@ -62,19 +69,62 @@ head_t *merge(head_t *block) {
     return primary;
 }
 
-short level(size_t alloc_len) {
+short get_level(size_t alloc_len) {
     size_t total_len = alloc_len + sizeof(head_t);
     // equivalent to ceil(log2(total_len))
     // total_len - 1 > 0 is guaranteed
     int level = 8 * sizeof(long) - __builtin_clzl((long) total_len - 1);
-    // max(MIN_LEVEL, bit_width - 1); bit_width == ceil(log2(total_len))
-    if (level > PAGE_LEVEL) {
-        return -1;
-    }
     return level < MIN_LEVEL ? MIN_LEVEL : level;
 }
 
+void *buddy_alloc(size_t len) {
+    if (len == 0) {
+        return NULL;
+    }
+    short level = get_level(len);
+    if (level > PAGE_LEVEL) {
+        // TODO if len > PAGE_LEN/2 - sizeof(head_t), return a whole page
+        // TODO if len > PAGE_LEN, use huge pages instead
+        return NULL;
+    }
+
+    if (g_top_block == NULL) {
+        g_top_block = new_block();
+        if (g_top_block == NULL) {
+            return NULL;
+        }
+    }
+
+    // find smallest free block that fits the allocation
+    head_t *smallest = NULL;
+    for (
+        head_t *current = g_top_block;
+        within_block(g_top_block, current);
+        current = get_next(current)
+    ) {
+        if (!current->taken &&
+            current->level >= level &&
+            (smallest == NULL || current->level < smallest->level)
+        ) {
+            smallest = current;
+        }
+    }
+    if (smallest == NULL) {
+        // TODO allow multiple top level blocks
+        return NULL;
+    }
+
+    while (level < smallest->level) {
+        split(smallest);
+    }
+
+    smallest->taken = true;
+    return smallest + 1;
+}
+
 void buddy_test() {
+    // util functions
+
     head_t *block = new_block();
     assert(block != NULL); // required for rest of tests to pass
     assert(block->level == PAGE_LEVEL);
@@ -106,9 +156,31 @@ void buddy_test() {
     assert(block->level == PAGE_LEVEL);
     assert(block == block_2);
 
-    assert(level(0) == MIN_LEVEL);
-    assert(level(sizeof(head_t)) == MIN_LEVEL);
-    assert(level(200 - sizeof(head_t)) == 8);
-    assert(level(256 - sizeof(head_t)) == 8);
-    assert(level(257 - sizeof(head_t)) == 9);
+    assert(get_level(0) == MIN_LEVEL);
+    assert(get_level(sizeof(head_t)) == MIN_LEVEL);
+    assert(get_level(200 - sizeof(head_t)) == 8);
+    assert(get_level(256 - sizeof(head_t)) == 8);
+    assert(get_level(257 - sizeof(head_t)) == 9);
+
+    // alloc
+
+    void *null_1 = buddy_alloc(PAGE_LEN);
+    void *null_2 = buddy_alloc(0);
+    assert(null_1 == NULL);
+    assert(null_2 == NULL);
+
+    int *ints[10];
+    for (int i = 0; i < 10; i++) {
+        ints[i] = buddy_alloc(sizeof(int));
+        *ints[i] = i;
+        for (int j = 0; j < i; j++) {
+            // test for no overlapping memory
+            assert(*ints[j] == j);
+        }
+    }
+
+    for (int i = 0; i < 10000; i++) {
+        // test for no SEGFAULT
+        buddy_alloc(sizeof(int));
+    }
 }
