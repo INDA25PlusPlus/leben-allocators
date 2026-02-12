@@ -15,7 +15,7 @@
 #define PAGE_LEN (1 << PAGE_LEVEL)
 #define ONES 0xffffffffffffffff
 
-typedef struct head {
+typedef struct {
     bool taken;
     short level;
 } head_t;
@@ -231,4 +231,7 @@ void buddy_test() {
         }
         buddy_free(diff_sizes[i]);
     }
+
+    assert(g_top_block->taken == false);
+    assert(g_top_block->level == PAGE_LEVEL);
 }
