@@ -136,102 +136,128 @@ void buddy_free(void *ptr) {
 void buddy_test() {
     // util functions
 
-    head_t *block = new_block();
-    assert(block != NULL); // required for rest of tests to pass
-    assert(block->level == PAGE_LEVEL);
+    {
+        // test block splitting and merging
 
-    head_t *buddy_1 = split(block);
-    assert(block->level == PAGE_LEVEL - 1);
-    assert(buddy_1->level == PAGE_LEVEL - 1);
-    assert((size_t) buddy_1 == (size_t) block + PAGE_LEN / 2);
-    assert(get_buddy(block) == buddy_1);
-    assert(get_buddy(buddy_1) == block);
-    assert(get_next(block) == buddy_1);
+        head_t *block = new_block();
+        assert(block != NULL); // required for rest of tests to pass
+        assert(block->level == PAGE_LEVEL);
 
-    head_t *buddy_2 = split(block);
-    assert(block->level == PAGE_LEVEL - 2);
-    assert(buddy_1->level == PAGE_LEVEL - 1);
-    assert(buddy_2->level == PAGE_LEVEL - 2);
-    assert((size_t) buddy_2 == (size_t) block + PAGE_LEN / 4);
-    assert(get_buddy(block) == buddy_2);
-    assert(get_buddy(buddy_1) == block);
-    assert(get_next(block) == buddy_2);
-    assert(get_next(buddy_2) == buddy_1);
+        head_t *buddy_1 = split(block);
+        assert(block->level == PAGE_LEVEL - 1);
+        assert(buddy_1->level == PAGE_LEVEL - 1);
+        assert((size_t) buddy_1 == (size_t) block + PAGE_LEN / 2);
+        assert(get_buddy(block) == buddy_1);
+        assert(get_buddy(buddy_1) == block);
+        assert(get_next(block) == buddy_1);
 
-    head_t *block_1 = merge(buddy_2);
-    assert(block->level == PAGE_LEVEL - 1);
-    assert(buddy_1->level == PAGE_LEVEL - 1);
-    assert(block == block_1);
+        head_t *buddy_2 = split(block);
+        assert(block->level == PAGE_LEVEL - 2);
+        assert(buddy_1->level == PAGE_LEVEL - 1);
+        assert(buddy_2->level == PAGE_LEVEL - 2);
+        assert((size_t) buddy_2 == (size_t) block + PAGE_LEN / 4);
+        assert(get_buddy(block) == buddy_2);
+        assert(get_buddy(buddy_1) == block);
+        assert(get_next(block) == buddy_2);
+        assert(get_next(buddy_2) == buddy_1);
 
-    head_t *block_2 = merge(buddy_1);
-    assert(block->level == PAGE_LEVEL);
-    assert(block == block_2);
+        head_t *block_1 = merge(buddy_2);
+        assert(block->level == PAGE_LEVEL - 1);
+        assert(buddy_1->level == PAGE_LEVEL - 1);
+        assert(block == block_1);
 
-    assert(get_level(0) == MIN_LEVEL);
-    assert(get_level(sizeof(head_t)) == MIN_LEVEL);
-    assert(get_level(200 - sizeof(head_t)) == 8);
-    assert(get_level(256 - sizeof(head_t)) == 8);
-    assert(get_level(257 - sizeof(head_t)) == 9);
+        head_t *block_2 = merge(buddy_1);
+        assert(block->level == PAGE_LEVEL);
+        assert(block == block_2);
+    }
 
-    // alloc
+    {
+        // test correct block levels for various allocation lengths
 
-    void *null_1 = buddy_alloc(PAGE_LEN);
-    void *null_2 = buddy_alloc(0);
-    assert(null_1 == NULL);
-    assert(null_2 == NULL);
+        assert(get_level(0) == MIN_LEVEL);
+        assert(get_level(sizeof(head_t)) == MIN_LEVEL);
+        assert(get_level(200 - sizeof(head_t)) == 8);
+        assert(get_level(256 - sizeof(head_t)) == 8);
+        assert(get_level(257 - sizeof(head_t)) == 9);
+    }
 
-    int *ints[10];
-    for (int i = 0; i < 10; i++) {
-        ints[i] = buddy_alloc(sizeof(int));
-        assert(ints[i] != NULL);
-        *ints[i] = i;
-        for (int j = 0; j < i; j++) {
-            // test for no overlapping memory
-            assert(*ints[j] == j);
+    // alloc/free
+
+    {
+        // test invalid allocation lengths
+
+        void *null_1 = buddy_alloc(PAGE_LEN);
+        void *null_2 = buddy_alloc(0);
+        assert(null_1 == NULL);
+        assert(null_2 == NULL);
+    }
+
+    {
+        // test that allocations don't overlap, and that
+
+        int *ints[10];
+        for (int i = 0; i < 10; i++) {
+            ints[i] = buddy_alloc(sizeof(int));
+            assert(ints[i] != NULL);
+            *ints[i] = i;
+            for (int j = 0; j < i; j++) {
+                assert(*ints[j] == j);
+            }
+        }
+
+        {
+            // test that no SEGFAULTS occur when out of memory
+
+            char *chars[10000];
+            for (int i = 0; i < 10000; i++) {
+                chars[i] = buddy_alloc(sizeof(char));
+            }
+
+            for (int i = 0; i < 10000; i++) {
+                buddy_free(chars[i]);
+            }
+        }
+
+        for (int i = 0; i < 10; i++) {
+            buddy_free(ints[i]);
         }
     }
 
-    char *chars[10000];
-    for (int i = 0; i < 10000; i++) {
-        // test for no SEGFAULT
-        chars[i] = buddy_alloc(sizeof(char));
-    }
+    {
+        // test that the expected number of allocations of different sizes
+        // fit in memory, and that values are stored and retrieved correctly
 
-    // free
-
-    for (int i = 0; i < 10; i++) {
-        buddy_free(ints[i]);
-    }
-    for (int i = 0; i < 10000; i++) {
-        buddy_free(chars[i]);
-    }
-
-    assert(PAGE_LEN >= 4096);
-    void *diff_sizes[10];
-    for (int i = 0; i < 10; i++) {
-        int size = 1 << i;
-        diff_sizes[i] = buddy_alloc(size);
-        char *char_ptr = diff_sizes[i];
-        for (int j = 0; j < size; j++) {
-            char_ptr[j] = (char) j;
+        assert(PAGE_LEN >= 4096);
+        void *diff_sizes[10];
+        for (int i = 0; i < 10; i++) {
+            int size = 1 << i;
+            diff_sizes[i] = buddy_alloc(size);
+            char *char_ptr = diff_sizes[i];
+            for (int j = 0; j < size; j++) {
+                char_ptr[j] = (char) j;
+            }
+            assert(diff_sizes[i] != NULL);
+            for (int k = 0; k < 1000; k++) {
+                void *temp = buddy_alloc(size);
+                assert(temp != NULL);
+                buddy_free(temp);
+            }
         }
-        assert(diff_sizes[i] != NULL);
-        for (int k = 0; k < 1000; k++) {
-            void *temp = buddy_alloc(size);
-            assert(temp != NULL);
-            buddy_free(temp);
+
+        for (int i = 0; i < 10; i++) {
+            int size = 1 << i;
+            char *char_ptr = diff_sizes[i];
+            for (int j = 0; j < size; j++) {
+                assert(char_ptr[j] == (char) j);
+            }
+            buddy_free(diff_sizes[i]);
         }
     }
 
-    for (int i = 0; i < 10; i++) {
-        int size = 1 << i;
-        char *char_ptr = diff_sizes[i];
-        for (int j = 0; j < size; j++) {
-            assert(char_ptr[j] == (char) j);
-        }
-        buddy_free(diff_sizes[i]);
-    }
+    {
+        // test that allocator is restored after all memory is deallocated
 
-    assert(g_top_block->taken == false);
-    assert(g_top_block->level == PAGE_LEVEL);
+        assert(g_top_block->taken == false);
+        assert(g_top_block->level == PAGE_LEVEL);
+    }
 }

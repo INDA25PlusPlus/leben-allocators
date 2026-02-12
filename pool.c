@@ -5,7 +5,6 @@
 #include "pool.h"
 
 #include <assert.h>
-#include <stdio.h>
 #include <sys/mman.h>
 
 
@@ -134,6 +133,8 @@ void pool_test() {
     // create/delete allocator
 
     {
+        // test invalid element sizes
+
         pool_alloc_t failed_1 = new_pool_alloc(0);
         pool_alloc_t failed_2 = new_pool_alloc(PAGE_LEN + 1);
         assert(new_pool_alloc_failed(&failed_1));
@@ -141,6 +142,8 @@ void pool_test() {
     }
 
     {
+        // test valid element sizes
+
         pool_alloc_t alloc_1 = new_pool_alloc(1);
         pool_alloc_t alloc_2 = new_pool_alloc(sizeof(pool_block_t));
         pool_alloc_t alloc_3 = new_pool_alloc(
@@ -156,6 +159,8 @@ void pool_test() {
     }
 
     {
+        // test block offset initialization
+
         pool_alloc_t alloc = new_pool_alloc(4);
         assert(!new_pool_alloc_failed(&alloc));
 
@@ -175,6 +180,8 @@ void pool_test() {
     // util functions
 
     {
+        // test offset/index conversion
+
         assert(offset_to_index(2, -2) == 1);
         assert(offset_to_index(2, -1) == -1);
         assert(offset_to_index(2, 0) == 3);
@@ -185,6 +192,8 @@ void pool_test() {
     }
 
     {
+        // test block referencing/dereferencing
+
         pool_alloc_t alloc = new_pool_alloc(4);
 
         assert(get_block(&alloc, -1) == NULL);
@@ -199,6 +208,8 @@ void pool_test() {
     }
 
     {
+        // test linked list behavior
+
         pool_alloc_t alloc = new_pool_alloc(4);
 
         pool_block_t *block_1 = consume_first_block(&alloc);
@@ -246,6 +257,9 @@ void pool_test() {
     // alloc/free
 
     {
+        // test that allocations don't overlap, and that behavior is
+        // consistent regardless of deallocation order
+
         pool_alloc_t alloc = new_pool_alloc(sizeof(int));
 
         {
